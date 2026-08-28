@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""File-based Windows command watcher with a small monitoring GUI."""
+"""ACC Watcher: network command watcher with Windows tray GUI."""
 from __future__ import annotations
 
 import argparse
@@ -15,10 +15,13 @@ from typing import Callable, Optional
 
 import tkinter as tk
 from tkinter import messagebox, ttk
+
+import pystray
+from PIL import Image, ImageDraw
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-WATCH_PATH = r"s:"
+WATCH_PATH = r"S:\"
 TASK_ON = r"acc_watcher\SteamLinkDisplay-On"
 TASK_OFF = r"acc_watcher\SteamLinkDisplay-Off"
 VDD_NAMES = ("Virtual Display Driver", "IddSampleDriver Device HDR")
@@ -90,7 +93,7 @@ def set_vdd_enabled(enabled: bool) -> bool:
 
 
 def switch_display_mode(mode: str) -> int:
-    """Privileged entry point used by Scheduled Task."""
+    """Privileged entry point invoked by the elevated Scheduled Tasks."""
     logger.info("Display mode request: %s", mode)
     try:
         display_switch = os.path.join(os.environ["WINDIR"], "System32", "DisplaySwitch.exe")
@@ -132,8 +135,7 @@ def run_display_task(mode: str) -> bool:
 
 def task_exists(task: str) -> bool:
     try:
-        result = run_process(["schtasks.exe", "/query", "/tn", task], timeout=5)
-        return result.returncode == 0
+        return run_process(["schtasks.exe", "/query", "/tn", task], timeout=5).returncode == 0
     except Exception:
         return False
 
@@ -147,12 +149,18 @@ def command_shutdown() -> None:
     subprocess.run(["shutdown.exe", "/s", "/t", "0"], check=False)
 
 
+def command_reboot() -> None:
+    subprocess.run(["shutdown.exe", "/r", "/t", "0"], check=False)
+
+
 def command_sleep() -> None:
     subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"], check=False)
 
 
 COMMANDS: dict[str, Callable[[], object]] = {
     "shutdown": command_shutdown,
+    "reboot": command_reboot,
+    "restart": command_reboot,
     "sleep": command_sleep,
     "notepad": lambda: launch_program("notepad.exe"),
     "vlc": lambda: launch_program(r"C:\Program Files\VideoLAN\VLC\vlc.exe"),
@@ -164,31 +172,49 @@ COMMANDS: dict[str, Callable[[], object]] = {
 
 
 class Handler(FileSystemEventHandler):
+    """Handle both create and modify events, which is important on SMB shares."""
+
     def __init__(self, callback: Callable[[str, bool, str], None]):
         self.callback = callback
         self.lock = threading.Lock()
+        self.processing: set[str] = set()
 
     def on_created(self, event):
+        self._queue_file(event)
+
+    def on_modified(self, event):
+        self._queue_file(event)
+
+    def _queue_file(self, event) -> None:
         if event.is_directory or not event.src_path.lower().endswith(".txt"):
             return
-        threading.Thread(target=self._process, args=(event.src_path,), daemon=True).start()
+        path = os.path.abspath(event.src_path)
+        with self.lock:
+            if path in self.processing:
+                return
+            self.processing.add(path)
+        threading.Thread(target=self._process, args=(path,), daemon=True).start()
 
     def _process(self, path: str) -> None:
-        with self.lock:
-            time.sleep(0.4)
+        try:
+            # Wait for the remote writer to finish copying/writing the file.
+            time.sleep(0.5)
             cmd = None
             last_error: Optional[Exception] = None
-            for _ in range(5):
+            for _ in range(10):
                 try:
                     with open(path, encoding="utf-8-sig") as f:
-                        cmd = f.read().strip().lower()
-                    break
+                        value = f.read().strip().lower()
+                    if value:
+                        cmd = value
+                        break
                 except Exception as exc:
                     last_error = exc
-                    time.sleep(0.25)
+                time.sleep(0.25)
+
             if cmd is None:
-                logger.error("Unable to read %s: %s", path, last_error)
-                self.callback("?", False, f"Read error: {last_error}")
+                logger.error("Unable to read command file %s: %s", path, last_error)
+                self.callback("?", False, "Read error or empty command")
                 return
 
             logger.info("Command received: %s", cmd)
@@ -205,10 +231,14 @@ class Handler(FileSystemEventHandler):
                 except Exception as exc:
                     logger.exception("Command %s failed", cmd)
                     self.callback(cmd, False, str(exc))
+
             try:
                 os.remove(path)
             except OSError as exc:
                 logger.warning("Could not delete %s: %s", path, exc)
+        finally:
+            with self.lock:
+                self.processing.discard(os.path.abspath(path))
 
 
 class WatcherApp:
@@ -217,13 +247,14 @@ class WatcherApp:
         self.root.title("ACC Watcher")
         self.root.geometry("650x430")
         self.root.minsize(600, 380)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+        self.root.withdraw()
+
         self.events: queue.Queue[tuple[str, bool, str]] = queue.Queue()
         self.status_events: queue.Queue[tuple[dict, bool]] = queue.Queue()
-        self.last_command = "-"
-        self.last_result = "-"
         self.observer: Optional[Observer] = None
         self.running = False
+        self.tray: Optional[pystray.Icon] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -235,15 +266,15 @@ class WatcherApp:
         status = ttk.LabelFrame(outer, text="Status", padding=10)
         status.pack(fill="x")
         self.watch_label = ttk.Label(status, text="Watcher: starting...")
-        self.watch_label.grid(row=0, column=0, sticky="w")
+        self.watch_label.pack(anchor="w")
         self.vdd_label = ttk.Label(status, text="VDD: checking...")
-        self.vdd_label.grid(row=1, column=0, sticky="w")
+        self.vdd_label.pack(anchor="w")
         self.tasks_label = ttk.Label(status, text="Display tasks: checking...")
-        self.tasks_label.grid(row=2, column=0, sticky="w")
+        self.tasks_label.pack(anchor="w")
         self.last_label = ttk.Label(status, text="Last command: -")
-        self.last_label.grid(row=3, column=0, sticky="w")
+        self.last_label.pack(anchor="w")
 
-        controls = ttk.LabelFrame(outer, text="Display", padding=10)
+        controls = ttk.LabelFrame(outer, text="Display (local test)", padding=10)
         controls.pack(fill="x", pady=10)
         ttk.Button(controls, text="Steam Link mode", command=lambda: self._manual_display("on")).pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Desktop mode", command=lambda: self._manual_display("off")).pack(side="left", padx=(0, 8))
@@ -254,9 +285,16 @@ class WatcherApp:
         self.log = tk.Text(log_frame, height=10, state="disabled", font=("Consolas", 9))
         self.log.pack(fill="both", expand=True)
 
+    def _create_tray_image(self):
+        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((6, 6, 58, 58), outline="white", width=5)
+        draw.rectangle((27, 16, 37, 48), fill="white")
+        return image
+
     def start(self):
         if not os.path.isdir(WATCH_PATH):
-            self._append("ERROR: watched path does not exist")
+            self._append(f"ERROR: watched path does not exist: {WATCH_PATH}")
             self.watch_label.configure(text="Watcher: PATH NOT FOUND")
         else:
             self.observer = Observer()
@@ -266,6 +304,21 @@ class WatcherApp:
             self.watch_label.configure(text="Watcher: RUNNING")
             logger.info("Watching %s", WATCH_PATH)
             self._append(f"Watching {WATCH_PATH}")
+
+        self.tray = pystray.Icon(
+            "acc_watcher",
+            self._create_tray_image(),
+            "ACC Watcher",
+            menu=pystray.Menu(
+                pystray.MenuItem("Open", self._tray_open),
+                pystray.MenuItem("Steam Link mode", lambda: self._manual_display("on")),
+                pystray.MenuItem("Desktop mode", lambda: self._manual_display("off")),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Exit", self._tray_exit),
+            ),
+        )
+        threading.Thread(target=self.tray.run, daemon=True).start()
+
         self.refresh()
         self.root.after(200, self._drain_events)
         self.root.after(3000, self._periodic_refresh)
@@ -280,8 +333,6 @@ class WatcherApp:
                 cmd, ok, message = self.events.get_nowait()
             except queue.Empty:
                 break
-            self.last_command = cmd
-            self.last_result = message
             self.last_label.configure(text=f"Last command: {cmd} — {message}")
             self._append(f"{'OK' if ok else 'ERROR'}  {cmd}: {message}")
         while True:
@@ -313,12 +364,29 @@ class WatcherApp:
 
     def _manual_display(self, mode: str):
         if not run_display_task(mode):
-            messagebox.showerror("ACC Watcher", "Scheduled display task non disponibile o non avviabile.")
+            self._append(f"ERROR: could not start display task ({mode})")
         else:
             self._append(f"Requested {'Steam Link' if mode == 'on' else 'Desktop'} mode")
             self.root.after(2500, self.refresh)
 
+    def _tray_open(self, icon=None, item=None):
+        self.root.after(0, self.show_window)
+
+    def _tray_exit(self, icon=None, item=None):
+        self.root.after(0, self.close)
+
+    def show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def hide_window(self):
+        self.root.withdraw()
+
     def _append(self, text: str):
+        logger.info(text)
+        if not self.root.winfo_exists():
+            return
         self.log.configure(state="normal")
         self.log.insert("end", f"{time.strftime('%H:%M:%S')}  {text}\n")
         self.log.see("end")
@@ -328,6 +396,11 @@ class WatcherApp:
         if self.observer:
             self.observer.stop()
             self.observer.join(timeout=2)
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
         self.root.destroy()
 
 
@@ -339,8 +412,7 @@ def main() -> int:
     if args.display_mode:
         return switch_display_mode(args.display_mode)
 
-    app = WatcherApp()
-    app.start()
+    WatcherApp().start()
     return 0
 
 
