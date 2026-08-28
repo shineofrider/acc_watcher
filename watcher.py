@@ -13,13 +13,18 @@ from typing import Callable
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-WATCH_PATH = r"S:\"
-TASK_ON = r"acc_watcher\SteamLinkDisplay-On"
-TASK_OFF = r"acc_watcher\SteamLinkDisplay-Off"
+# Network folder containing command .txt files.
+WATCH_PATH = "S:\\"
+
+# Privileged Windows Scheduled Tasks used for display switching.
+TASK_ON = r"\acc_watcher\SteamLinkDisplay-On"
+TASK_OFF = r"\acc_watcher\SteamLinkDisplay-Off"
+
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "acc_watcher"
 LOG_FILE = LOG_DIR / "watcher.log"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("acc_watcher")
 
 
@@ -34,7 +39,7 @@ def run_task(task: str) -> bool:
         if result.returncode != 0:
             logger.error("schtasks failed for %s: %s", task, result.stderr.strip())
             return False
-        logger.info("Started scheduled task %s", task)
+        logger.info("Started scheduled task: %s", task)
         return True
     except Exception:
         logger.exception("Unable to start task %s", task)
@@ -43,7 +48,8 @@ def run_task(task: str) -> bool:
 
 def launch(path: str) -> bool:
     try:
-        subprocess.Popen([os.path.expandvars(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        subprocess.Popen([os.path.expandvars(path)],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return True
     except Exception:
         logger.exception("Unable to launch %s", path)
@@ -148,6 +154,7 @@ def run_watcher() -> int:
     if not os.path.isdir(WATCH_PATH):
         logger.error("Watch path does not exist: %s", WATCH_PATH)
         return 1
+
     observer = Observer()
     observer.schedule(Handler(), WATCH_PATH, recursive=False)
     observer.start()
