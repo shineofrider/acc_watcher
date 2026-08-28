@@ -38,14 +38,24 @@ $principal = New-ScheduledTaskPrincipal `
     -LogonType Interactive `
     -RunLevel Highest
 
-# Ensure the task folder exists.
+# Ensure the task folder exists. GetFolder throws if it is missing;
+# only then attempt to create it. Ignore the benign race where another
+# process creates it between GetFolder and CreateFolder.
 $service = New-Object -ComObject 'Schedule.Service'
 $service.Connect()
 $root = $service.GetFolder('\')
+$folderPath = $TaskPath.TrimEnd('\')
 try {
-    $null = $root.GetFolder($TaskPath.TrimEnd('\'))
+    $null = $root.GetFolder($folderPath)
 } catch {
-    $null = $root.CreateFolder($TaskPath.TrimEnd('\'), $null)
+    try {
+        $null = $root.CreateFolder($folderPath, $null)
+    } catch {
+        # 0x800700B7 = already exists; otherwise rethrow.
+        if ($_.Exception.HResult -ne -2147024713) {
+            throw
+        }
+    }
 }
 
 function Register-DisplayTask {
