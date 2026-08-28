@@ -1,6 +1,7 @@
 [CmdletBinding()]
 $ErrorActionPreference = 'Stop'
-$names = @('acc_watcher\SteamLinkDisplay-On', 'acc_watcher\SteamLinkDisplay-Off')
+$TaskPath = '\acc_watcher\'
+$names = @('SteamLinkDisplay-On', 'SteamLinkDisplay-Off')
 
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 $p = New-Object Security.Principal.WindowsPrincipal($id)
@@ -10,6 +11,6 @@ if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 }
 
 foreach ($name in $names) {
-    Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host "Removed $name"
+    Unregister-ScheduledTask -TaskPath $TaskPath -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host "Removed $TaskPath$name"
 }
