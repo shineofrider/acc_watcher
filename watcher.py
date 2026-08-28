@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-WATCH_PATH = r"S:\"
+WATCH_PATH = "S:\\"
 TASK_ON = r"acc_watcher\SteamLinkDisplay-On"
 TASK_OFF = r"acc_watcher\SteamLinkDisplay-Off"
 VDD_NAMES = ("Virtual Display Driver", "IddSampleDriver Device HDR")
@@ -29,63 +29,47 @@ LOG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "acc_watcher"
 LOG_FILE = LOG_DIR / "watcher.log"
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("acc_watcher")
 
 
 def run_process(args: list[str], timeout: float = 30) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    return subprocess.run(args, text=True, capture_output=True, timeout=timeout,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def run_powershell(command: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
-    return run_process(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
-        timeout,
-    )
+    return run_process(["powershell.exe", "-NoProfile", "-NonInteractive",
+                        "-ExecutionPolicy", "Bypass", "-Command", command], timeout)
 
 
 def get_vdd_status() -> dict:
     names = ",".join("'" + n.replace("'", "''") + "'" for n in VDD_NAMES)
-    command = (
-        f"$d=Get-PnpDevice -Class Display -ErrorAction SilentlyContinue | "
-        f"Where-Object {{$_.FriendlyName -in @({names})}} | Select-Object -First 1 FriendlyName,Status,InstanceId; "
-        f"if($d){{$d|ConvertTo-Json -Compress}}"
-    )
+    command = (f"$d=Get-PnpDevice -Class Display -ErrorAction SilentlyContinue | "
+               f"Where-Object {{$_.FriendlyName -in @({names})}} | "
+               f"Select-Object -First 1 FriendlyName,Status,InstanceId; "
+               f"if($d){{$d|ConvertTo-Json -Compress}}")
     try:
-        result = run_powershell(command, timeout=5)
+        result = run_powershell(command, 5)
         if result.returncode != 0 or not result.stdout.strip():
             return {"installed": False, "status": "Unknown", "error": result.stderr.strip()}
         data = json.loads(result.stdout.strip())
-        return {
-            "installed": True,
-            "status": data.get("Status", "Unknown"),
-            "friendly_name": data.get("FriendlyName", "Virtual Display Driver"),
-            "instance_id": data.get("InstanceId", ""),
-        }
+        return {"installed": True, "status": data.get("Status", "Unknown"),
+                "friendly_name": data.get("FriendlyName", "Virtual Display Driver"),
+                "instance_id": data.get("InstanceId", "")}
     except Exception as exc:
         return {"installed": False, "status": "Unknown", "error": str(exc)}
 
 
 def set_vdd_enabled(enabled: bool) -> bool:
     names = ",".join("'" + n.replace("'", "''") + "'" for n in VDD_NAMES)
-    command = (
-        f"$d=Get-PnpDevice -Class Display -ErrorAction Stop | "
-        f"Where-Object {{$_.FriendlyName -in @({names})}} | Select-Object -First 1; "
-        f"if(-not $d){{throw 'Virtual Display Driver not found'}}; "
-        f"if({str(enabled).lower()}){{Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false}} "
-        f"else {{Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false}}"
-    )
-    result = run_powershell(command, timeout=30)
+    command = (f"$d=Get-PnpDevice -Class Display -ErrorAction Stop | "
+               f"Where-Object {{$_.FriendlyName -in @({names})}} | Select-Object -First 1; "
+               f"if(-not $d){{throw 'Virtual Display Driver not found'}}; "
+               f"if({str(enabled).lower()}){{Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false}} "
+               f"else {{Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false}}")
+    result = run_powershell(command, 30)
     if result.returncode != 0:
         logger.error("VDD %s failed: %s", "enable" if enabled else "disable", result.stderr.strip())
         return False
@@ -93,7 +77,6 @@ def set_vdd_enabled(enabled: bool) -> bool:
 
 
 def switch_display_mode(mode: str) -> int:
-    """Privileged entry point invoked by the elevated Scheduled Tasks."""
     logger.info("Display mode request: %s", mode)
     try:
         display_switch = os.path.join(os.environ["WINDIR"], "System32", "DisplaySwitch.exe")
@@ -122,7 +105,7 @@ def switch_display_mode(mode: str) -> int:
 def run_display_task(mode: str) -> bool:
     task = TASK_ON if mode == "on" else TASK_OFF
     try:
-        result = run_process(["schtasks.exe", "/run", "/tn", task], timeout=15)
+        result = run_process(["schtasks.exe", "/run", "/tn", task], 15)
         if result.returncode != 0:
             logger.error("Cannot run task %s: %s", task, result.stderr.strip())
             return False
@@ -135,14 +118,13 @@ def run_display_task(mode: str) -> bool:
 
 def task_exists(task: str) -> bool:
     try:
-        return run_process(["schtasks.exe", "/query", "/tn", task], timeout=5).returncode == 0
+        return run_process(["schtasks.exe", "/query", "/tn", task], 5).returncode == 0
     except Exception:
         return False
 
 
 def launch_program(path: str) -> None:
-    expanded = os.path.expandvars(path)
-    subprocess.Popen([expanded], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    subprocess.Popen([os.path.expandvars(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def command_shutdown() -> None:
@@ -172,8 +154,6 @@ COMMANDS: dict[str, Callable[[], object]] = {
 
 
 class Handler(FileSystemEventHandler):
-    """Handle create/modify events; SMB writers often modify after creating."""
-
     def __init__(self, callback: Callable[[str, bool, str], None]):
         self.callback = callback
         self.lock = threading.Lock()
@@ -209,7 +189,6 @@ class Handler(FileSystemEventHandler):
                 except OSError:
                     pass
                 time.sleep(0.25)
-
             if cmd is None:
                 logger.error("Unable to read command file %s", path)
                 self.callback("?", False, "Read error or empty command")
@@ -229,7 +208,6 @@ class Handler(FileSystemEventHandler):
                 except Exception as exc:
                     logger.exception("Command %s failed", cmd)
                     self.callback(cmd, False, str(exc))
-
             try:
                 os.remove(path)
             except OSError as exc:
@@ -247,7 +225,6 @@ class WatcherApp:
         self.root.minsize(600, 380)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.root.withdraw()
-
         self.events: queue.Queue[tuple[str, bool, str]] = queue.Queue()
         self.status_events: queue.Queue[tuple[dict, bool]] = queue.Queue()
         self.observer: Optional[Observer] = None
@@ -260,7 +237,6 @@ class WatcherApp:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="ACC Watcher", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         ttk.Label(outer, text=f"Watching: {WATCH_PATH}").pack(anchor="w", pady=(0, 12))
-
         status = ttk.LabelFrame(outer, text="Status", padding=10)
         status.pack(fill="x")
         self.watch_label = ttk.Label(status, text="Watcher: starting...")
@@ -271,13 +247,11 @@ class WatcherApp:
         self.tasks_label.pack(anchor="w")
         self.last_label = ttk.Label(status, text="Last command: -")
         self.last_label.pack(anchor="w")
-
         controls = ttk.LabelFrame(outer, text="Display (local test)", padding=10)
         controls.pack(fill="x", pady=10)
         ttk.Button(controls, text="Steam Link mode", command=lambda: self._manual_display("on")).pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Desktop mode", command=lambda: self._manual_display("off")).pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Refresh", command=self.refresh).pack(side="left")
-
         log_frame = ttk.LabelFrame(outer, text="Activity", padding=8)
         log_frame.pack(fill="both", expand=True)
         self.log = tk.Text(log_frame, height=10, state="disabled", font=("Consolas", 9))
@@ -302,11 +276,8 @@ class WatcherApp:
             self.watch_label.configure(text="Watcher: RUNNING")
             logger.info("Watching %s", WATCH_PATH)
             self._append(f"Watching {WATCH_PATH}")
-
         self.tray = pystray.Icon(
-            "acc_watcher",
-            self._create_tray_image(),
-            "ACC Watcher",
+            "acc_watcher", self._create_tray_image(), "ACC Watcher",
             menu=pystray.Menu(
                 pystray.MenuItem("Open", self._tray_open),
                 pystray.MenuItem("Steam Link mode", lambda: self._manual_display("on")),
@@ -316,7 +287,6 @@ class WatcherApp:
             ),
         )
         threading.Thread(target=self.tray.run, daemon=True).start()
-
         self.refresh()
         self.root.after(200, self._drain_events)
         self.root.after(3000, self._periodic_refresh)
@@ -406,10 +376,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--display-mode", choices=("on", "off"), help=argparse.SUPPRESS)
     args = parser.parse_args()
-
     if args.display_mode:
         return switch_display_mode(args.display_mode)
-
     WatcherApp().start()
     return 0
 
