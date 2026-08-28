@@ -35,7 +35,7 @@ if (-not $ExecutablePath) {
 $ExecutablePath = (Resolve-Path $ExecutablePath).Path
 $principal = New-ScheduledTaskPrincipal `
     -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-    -LogonType InteractiveToken `
+    -LogonType Interactive `
     -RunLevel Highest
 
 # Ensure the task folder exists.
