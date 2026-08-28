@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 import pystray
 from PIL import Image, ImageDraw
@@ -172,7 +172,7 @@ COMMANDS: dict[str, Callable[[], object]] = {
 
 
 class Handler(FileSystemEventHandler):
-    """Handle both create and modify events, which is important on SMB shares."""
+    """Handle create/modify events; SMB writers often modify after creating."""
 
     def __init__(self, callback: Callable[[str, bool, str], None]):
         self.callback = callback
@@ -197,10 +197,8 @@ class Handler(FileSystemEventHandler):
 
     def _process(self, path: str) -> None:
         try:
-            # Wait for the remote writer to finish copying/writing the file.
             time.sleep(0.5)
             cmd = None
-            last_error: Optional[Exception] = None
             for _ in range(10):
                 try:
                     with open(path, encoding="utf-8-sig") as f:
@@ -208,12 +206,12 @@ class Handler(FileSystemEventHandler):
                     if value:
                         cmd = value
                         break
-                except Exception as exc:
-                    last_error = exc
+                except OSError:
+                    pass
                 time.sleep(0.25)
 
             if cmd is None:
-                logger.error("Unable to read command file %s: %s", path, last_error)
+                logger.error("Unable to read command file %s", path)
                 self.callback("?", False, "Read error or empty command")
                 return
 
