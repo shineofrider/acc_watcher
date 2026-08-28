@@ -15,9 +15,11 @@ function Test-Admin {
 }
 
 if (-not (Test-Admin)) {
-    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`")
-    if ($ExecutablePath) { $args += @('-ExecutablePath', "`"$ExecutablePath`") }
-    Start-Process powershell.exe -Verb RunAs -ArgumentList $args
+    $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    if ($ExecutablePath) {
+        $argList += " -ExecutablePath `"$ExecutablePath`""
+    }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
 
