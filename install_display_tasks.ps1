@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 $TaskPath = '\acc_watcher\'
 $TaskOn = 'SteamLinkDisplay-On'
 $TaskOff = 'SteamLinkDisplay-Off'
+$ScriptPath = Join-Path $PSScriptRoot 'display_manager.ps1'
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -16,31 +17,21 @@ function Test-Admin {
 
 if (-not (Test-Admin)) {
     $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-    if ($ExecutablePath) {
-        $argList += " -ExecutablePath `"$ExecutablePath`""
-    }
+    if ($ExecutablePath) { $argList += " -ExecutablePath `"$ExecutablePath`"" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
 
-if (-not $ExecutablePath) {
-    $candidate = Join-Path $PSScriptRoot 'dist\acc_watcher.exe'
-    if (Test-Path $candidate) {
-        $ExecutablePath = $candidate
-    } else {
-        throw 'acc_watcher.exe not found. Build the project first or use -ExecutablePath.'
-    }
+if (-not (Test-Path -LiteralPath $ScriptPath)) {
+    throw "display_manager.ps1 not found: $ScriptPath"
 }
 
-$ExecutablePath = (Resolve-Path $ExecutablePath).Path
+$ScriptPath = (Resolve-Path $ScriptPath).Path
 $principal = New-ScheduledTaskPrincipal `
     -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
     -LogonType Interactive `
     -RunLevel Highest
 
-# Ensure the task folder exists. GetFolder throws if it is missing;
-# only then attempt to create it. Ignore the benign race where another
-# process creates it between GetFolder and CreateFolder.
 $service = New-Object -ComObject 'Schedule.Service'
 $service.Connect()
 $root = $service.GetFolder('\')
@@ -48,19 +39,17 @@ $folderPath = $TaskPath.TrimEnd('\')
 try {
     $null = $root.GetFolder($folderPath)
 } catch {
-    try {
-        $null = $root.CreateFolder($folderPath, $null)
-    } catch {
-        # 0x800700B7 = already exists; otherwise rethrow.
-        if ($_.Exception.HResult -ne -2147024713) {
-            throw
-        }
+    try { $null = $root.CreateFolder($folderPath, $null) }
+    catch {
+        if ($_.Exception.HResult -ne -2147024713) { throw }
     }
 }
 
 function Register-DisplayTask {
     param([string]$Name, [string]$Mode)
-    $action = New-ScheduledTaskAction -Execute $ExecutablePath -Argument "--display-mode $Mode"
+    $action = New-ScheduledTaskAction `
+        -Execute 'powershell.exe' `
+        -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$ScriptPath`" -Mode $Mode"
     Register-ScheduledTask -TaskPath $TaskPath -TaskName $Name -Action $action -Principal $principal -Force | Out-Null
     Write-Host "Installed $TaskPath$Name"
 }
@@ -69,4 +58,4 @@ Register-DisplayTask -Name $TaskOn -Mode 'on'
 Register-DisplayTask -Name $TaskOff -Mode 'off'
 Write-Host ''
 Write-Host 'Display tasks installed successfully.' -ForegroundColor Green
-Write-Host "Executable: $ExecutablePath"
+Write-Host "Display manager: $ScriptPath"
