@@ -4,8 +4,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$TaskOn = 'acc_watcher\SteamLinkDisplay-On'
-$TaskOff = 'acc_watcher\SteamLinkDisplay-Off'
+$TaskPath = '\acc_watcher\'
+$TaskOn = 'SteamLinkDisplay-On'
+$TaskOff = 'SteamLinkDisplay-Off'
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -14,7 +15,7 @@ function Test-Admin {
 }
 
 if (-not (Test-Admin)) {
-    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`")
     if ($ExecutablePath) { $args += @('-ExecutablePath', "`"$ExecutablePath`") }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $args
     exit
@@ -35,11 +36,21 @@ $principal = New-ScheduledTaskPrincipal `
     -LogonType InteractiveToken `
     -RunLevel Highest
 
+# Ensure the task folder exists.
+$service = New-Object -ComObject 'Schedule.Service'
+$service.Connect()
+$root = $service.GetFolder('\')
+try {
+    $null = $root.GetFolder($TaskPath.TrimEnd('\'))
+} catch {
+    $null = $root.CreateFolder($TaskPath.TrimEnd('\'), $null)
+}
+
 function Register-DisplayTask {
     param([string]$Name, [string]$Mode)
     $action = New-ScheduledTaskAction -Execute $ExecutablePath -Argument "--display-mode $Mode"
-    Register-ScheduledTask -TaskName $Name -Action $action -Principal $principal -Force | Out-Null
-    Write-Host "Installed $Name"
+    Register-ScheduledTask -TaskPath $TaskPath -TaskName $Name -Action $action -Principal $principal -Force | Out-Null
+    Write-Host "Installed $TaskPath$Name"
 }
 
 Register-DisplayTask -Name $TaskOn -Mode 'on'
