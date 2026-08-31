@@ -36,17 +36,17 @@ try {
             Write-Log 'VDD already enabled'
         }
 
-        $displaySwitch = Join-Path $env:WINDIR 'System32\DisplaySwitch.exe'
-        Write-Log 'Selecting external display'
-        $p = Start-Process -FilePath $displaySwitch -ArgumentList '/external' -Wait -PassThru
-        if ($p.ExitCode -ne 0) { throw "DisplaySwitch /external failed with exit code $($p.ExitCode)." }
+#        $displaySwitch = Join-Path $env:WINDIR 'System32\DisplaySwitch.exe'
+#        Write-Log 'Selecting external display'
+#        $p = Start-Process -FilePath $displaySwitch -ArgumentList '/external' -Wait -PassThru
+#        if ($p.ExitCode -ne 0) { throw "DisplaySwitch /external failed with exit code $($p.ExitCode)." }
     }
     else {
-        $displaySwitch = Join-Path $env:WINDIR 'System32\DisplaySwitch.exe'
-        Write-Log 'Selecting internal display'
-        $p = Start-Process -FilePath $displaySwitch -ArgumentList '/internal' -Wait -PassThru
-        if ($p.ExitCode -ne 0) { throw "DisplaySwitch /internal failed with exit code $($p.ExitCode)." }
-        Start-Sleep -Seconds 2
+ #       $displaySwitch = Join-Path $env:WINDIR 'System32\DisplaySwitch.exe'
+ #       Write-Log 'Selecting internal display'
+ #       $p = Start-Process -FilePath $displaySwitch -ArgumentList '/internal' -Wait -PassThru
+ #       if ($p.ExitCode -ne 0) { throw "DisplaySwitch /internal failed with exit code $($p.ExitCode)." }
+ #       Start-Sleep -Seconds 2
 
         $vdd = Get-Vdd
         if ($vdd.Status -eq 'OK') {
